@@ -1,0 +1,1719 @@
+---
+title: "Complete Guide to NEX GDDP CMIP6 Data Extraction and Bias Correction"
+author: "Revanth Mamidala"
+date: "2025-03-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Folder Structure
+To maintain a structured workflow, the following folder structure is used in this tutorial:
+```plaintext
+📂 Project Root
+│── 📂 Inputs Folder
+│   │── 📂 Observed_Climate_Variables  # Contains observed PRISM climate data (e.g., precipitation, temperature)
+│   │   │── pcp_mm.csv                 # Observed precipitation data (mm)
+│   │   │── hmd_percent.csv            # Observed relative humidity data (%)
+│   │   │── tmp_max_c.csv              # Observed maximum temperature (°C)
+│   │   │── tmp_min_c.csv              # Observed minimum temperature (°C)
+│   │   │── wnd_mps.csv                # Observed wind speed (m/s)
+│
+│── 📂 Outputs Folder
+│   │── 📂 raw cmip6 unit converted csv  # Stores raw CMIP6 data converted to appropriate units
+│   │── 📂 bias corrected cmip6 csv      # Stores bias-corrected CMIP6 data using Random Forest
+│   │── 📂 Statistical_Metrics           # Stores computed statistical metrics comparing raw, corrected, and observed data
+│   │── 📂 CDF_Plots                     # Stores CDF plots for visualization of distributions
+│
+│── 📂 Scripts
+│   │── data_download.R                    # Script for downloading and processing CMIP6 data
+│   │── bias_correction_RF.R               # Script for bias correction using Random Forest
+│   │── statistical_analysis.R             # Script for computing performance metrics
+│   │── visualization_CDF.R                # Script for plotting CDF curves
+│
+│── CMIP6_Data_Extraction_and_Bias_Correction.Rmd   # This tutorial notebook
+│── README.md                                       # Documentation on how to use the workflow
+```
+---
+
+### Introduction
+This document serves as a complete guide to extracting and bias-correcting NEX-GDDP-CMIP6 climate model data for point station locations using Random Forest Machine Learning with PRISM observed data as a reference.
+
+### What is NEX-GDDP-CMIP6?
+The NASA Earth Exchange Global Daily Downscaled Projections (NEX-GDDP-CMIP6) dataset provides downscaled climate projections based on simulations from the Coupled Model Intercomparison Project Phase 6 (CMIP6). This dataset is crucial for climate impact studies at finer spatial resolutions.
+
+### Purpose of This Tutorial
+This tutorial demonstrates:
+
+  1. How to download and process CMIP6 data for specific stations.
+  2. How to apply bias correction using a Random Forest Machine Learning Model.
+  3. How to compare raw vs. bias-corrected data using statistical metrics and visualization techniques.
+
+This notebook is written in R Markdown, allowing users to:
+
+### Expected Outcomes
+At the end of this tutorial, you will be able to: 
+  
+    ✔ Retrieve CMIP6 climate model projections for your desired locations.
+    ✔ Apply bias correction using Random Forest Regression.
+    ✔ Evaluate the improvements in climate projections using statistical metrics.
+    ✔ Visualize Cumulative Distribution Functions (CDFs) for better understanding of data distributions.
+
+---
+
+## Section 1: Downloading CMIP6 Data
+
+This section provides a detailed explanation of the CMIP6 data extraction script that downloads, processes, and extracts data from NetCDF files for selected stations.
+
+
+### 1. Input Files, Folder Structure, and Their Contents
+Before running the script, it's essential to understand the input files and folder structure used in this process.
+
+**1.1. Input Files**
+
+- locations.csv: Contains latitude, longitude, and station IDs for the locations where climate data needs to be extracted.
+- filtered_data.csv: A CSV file present in each variable folder that lists the NetCDF file paths needed for processing.
+
+**1.2. Folder Structure**
+
+The script uses a well-organized directory structure to store and process CMIP6 data:
+
+```plaintext
+📂 Inputs Folder
+│── 📂 NEX-GDDP-CMIP6                       # Folder containing CMIP6 NetCDF files
+│   │── 📂 ACCESS-CM2                       # Example GCM (Climate Model)
+│   │   │── 📂 historical                   # Scenario Folder (historical or future projections)
+│   │   │   │── 📂 pr                       # Variable Folder (precipitation)
+│   │   │   │   │── filtered_data.csv       # CSV listing available NetCDF files
+│   │   │   │   │── <NetCDF Files>          # NetCDF files for precipitation
+│   │   │   │── 📂 hurs                     # Variable Folder (relative humidity)
+│   │   │   │   │── filtered_data.csv
+│   │   │   │   │── <NetCDF Files>
+│
+📂 Outputs Folder
+│── 📂 CMIP6 Data extracted from netcdfs     # Stores extracted climate data in CSV format
+│── 📂 Temporary NetCDF file                 # Stores downloaded NetCDF files temporarily
+│
+📂 R Script Folder
+│── data_download.R                           # This script for extracting CMIP6 data
+│── bias_correction_RF.R                      # Bias correction using Random Forest
+```
+
+### 2. Explanation of Key Script Components
+
+**2.1. Defining Base Directories**
+
+The script starts by defining folder paths where files will be read from and stored:
+
+- search_folder → The directory where raw CMIP6 NetCDF files are stored.
+- output_folder → The location where extracted CSV files (processed station data) will be saved.
+- specified_temp_folder → A temporary directory used to store downloaded NetCDF files.
+- locations_file → The CSV file containing station locations (latitude, longitude, and ID).
+
+**2.2. Ensuring Temporary Folder Exists**
+
+The script creates the temporary NetCDF folder if it does not already exist.
+
+
+### 3. Selecting GCMs, Scenarios, and Variables
+This section specifies which CMIP6 models, scenarios, and climate variables will be processed.
+
+- gcm_list <- c("ACCESS-CM2")   # List of climate models to process
+- scenario_list <- c("historical")  # CMIP6 scenarios (e.g., historical, ssp245, ssp370)
+- variable_list <- c("pr","hurs")  # Climate variables to extract (precipitation, humidity)
+- delete_NetCDF_file <- "Yes"  # Set to "No" to keep NetCDF files after processing
+
+**Understanding These Variables**
+
+- gcm_list → Contains the list of General Circulation Models (GCMs) to be processed. The example uses ACCESS-CM2.
+- scenario_list → Specifies the climate projection scenarios:
+  - "historical": Past climate conditions(1950-2014).
+  - "ssp126", "ssp245", "ssp370", "ssp585" (not listed in this example) are future emission scenarios.(2015-2100).
+- variable_list → Specifies the climate variables to extract:
+  - "pr" → Precipitation
+  - "hurs" → Relative Humidity
+- delete_NetCDF_file → Controls whether the downloaded NetCDF files are deleted after processing.
+
+
+### 4. Downloading NetCDF Files
+The script 
+- downloads NetCDF files dynamically based on filtered_data.csv using the *AWS NEX-GDDP-CMIP6 storage* link.
+- Constructs the download URL for each file.
+- Saves it in the temporary folder.
+- Handles errors if the download fails.
+
+
+### 5. Extracting Data from NetCDF Files
+Once downloaded, the script extracts data using nearest neighbor interpolation for station locations.
+
+**5.1. Opening the NetCDF File**
+
+This extracts:
+- Latitude (lat)
+- Longitude (lon)
+- Time (time_vals) in days or hours since a reference date.
+
+**5.2. Converting Time Values**
+
+This converts NetCDF time format to standard date format (YYYY-MM-DD).
+
+### 6. Main Processing Loop
+The script loops through each GCM, scenario, and variable and extracts station-specific data.
+This ensures efficient downloading and extraction of climate data for multiple locations.
+
+---
+
+## 1. Downloading CMIP6 Data
+```{r}
+# Load required libraries
+library(httr)
+library(ncdf4)
+library(dplyr)
+library(readr)
+library(lubridate)
+library(data.table)
+library(here)
+#---------------------------------------------------------------------------------------------------#
+# 2.1. Defining Base Directories
+search_folder <- here("..", "Inputs Folder", "NEX-GDDP-CMIP6")
+output_folder <- here("..", "Outputs folder", "CMIP6 Data extracted from netcdfs")
+specified_temp_folder <- here("..", "Outputs folder", "Temporary NetCDF file")
+locations_file <- here("..", "Inputs Folder", "locations.csv")
+
+# 2.2. Ensuring Temporary Folder Exists
+# Check and create temporary folder if not exists
+if (!dir.exists(specified_temp_folder)) {
+  cat("Creating temporary folder...\n")
+  dir.create(specified_temp_folder, recursive = TRUE)
+}
+temp_download_folder <- specified_temp_folder
+cat(sprintf("Using temporary folder: %s\n", temp_download_folder))
+#---------------------------------------------------------------------------------------------------#
+# 3. Selecting GCMs, Scenarios, and Variables
+gcm_list <- c("ACCESS-CM2") # List of climate models to process
+scenario_list <- c("historical","ssp126") # CMIP6 scenarios (e.g., historical, ssp245, ssp370)
+variable_list <- c("pr","hurs","tasmax") # Climate variables to extract (precipitation, humidity)
+delete_NetCDF_file <- "Yes"  # Set to "No" to keep the NetCDF file
+#---------------------------------------------------------------------------------------------------#
+# 4. Downloading NetCDF Files
+# Define AWS CMIP6 base URL
+base_url <- "https://nex-gddp-cmip6.s3.us-west-2.amazonaws.com/"
+
+# Read station locations
+stations <- read_csv(locations_file)
+
+# Function to check and create folder structure
+create_folder_if_not_exists <- function(folder_path) {
+  if (!dir.exists(folder_path)) {
+    dir.create(folder_path, recursive = TRUE)
+  }
+}
+
+# Function to download NetCDF files
+download_netcdf <- function(file_path) {
+  full_url <- paste0(base_url, file_path)
+  local_file <- file.path(temp_download_folder, basename(file_path))
+
+  cat(sprintf("Downloading: %s\n", full_url))
+
+  tryCatch({
+    download.file(full_url, local_file, mode = "wb", method = "curl")
+    return(local_file)
+  }, error = function(e) {
+    cat(sprintf("Failed to download file: %s\nError: %s\n", file_path, e$message))
+    return(NULL)
+  })
+}
+
+#---------------------------------------------------------------------------------------------------#
+# 5. Extracting Data from NetCDF Files
+
+# Function to extract data using Nearest Neighbor
+extract_station_data <- function(nc_file, stations, variable) {
+  # 5.1. Opening the NetCDF File
+  nc <- nc_open(nc_file)
+
+  # Read latitude, longitude, and time values
+  lat <- ncvar_get(nc, "lat")
+  lon <- ncvar_get(nc, "lon")
+  time_vals <- ncvar_get(nc, "time")  # Get raw time values from NetCDF
+
+  # 5.2. Converting Time Values
+  # Extract time units from NetCDF metadata
+  time_units <- ncatt_get(nc, "time", "units")$value
+
+  # Extract reference date from "since" part in time units
+  start_date_str <- sub(".*since ", "", time_units)
+  start_date <- as.POSIXct(start_date_str, tz = "UTC")  # Use UTC timezone
+
+  # Convert time values correctly (keep as it is)
+  if (grepl("hour", time_units, ignore.case = TRUE)) {
+    timestamps <- start_date + dhours(time_vals)
+  } else {
+    timestamps <- start_date + ddays(time_vals)
+  }
+
+  # Convert to POSIXct and extract only the date (YYYY-MM-DD)
+  timestamps <- as.POSIXct(timestamps, tz = "UTC")
+  timestamps <- format(timestamps, "%Y-%m-%d")
+
+  # Initialize dataframe with timestamps (no modification)
+  extracted_data <- data.frame(Date = timestamps)
+
+  # Extract data for each station
+  for (i in 1:nrow(stations)) {
+    station_name <- stations$ID[i]
+    station_lat <- stations$Latitude[i]
+    station_lon <- stations$Longitude[i]
+
+    # Find nearest latitude and longitude indices
+    lat_idx <- which.min(abs(lat - station_lat))
+    lon_idx <- which.min(abs(lon - station_lon))
+
+    # Extract data for the nearest point
+    extracted_values <- ncvar_get(nc, variable, start = c(lon_idx, lat_idx, 1), count = c(1, 1, -1))
+
+    # Ensure extracted_values is a numeric vector
+    extracted_values <- as.numeric(unlist(extracted_values))
+
+    # Assign extracted data to dataframe
+    extracted_data[[station_name]] <- extracted_values
+  }
+
+  # Close NetCDF file
+  nc_close(nc)
+
+  return(extracted_data)
+}
+#---------------------------------------------------------------------------------------------------#
+# 6. Main Processing Loop
+for (gcm in gcm_list) {
+  for (scenario in scenario_list) {
+    for (variable in variable_list) {
+      cat(sprintf("\n Processing: %s -> %s -> %s\n", gcm, scenario, variable))
+
+      # Define folder paths
+      variable_path <- file.path(search_folder, gcm, scenario, variable)
+      output_var_path <- file.path(output_folder, gcm, scenario, variable)
+
+      # Check if variable folder exists
+      if (!dir.exists(variable_path)) {
+        cat(sprintf("Variable %s does not exist in %s -> %s. Skipping...\n", variable, gcm, scenario))
+        next
+      }
+
+      # Create output folder
+      create_folder_if_not_exists(output_var_path)
+
+      # Locate filtered_data.csv
+      csv_path <- file.path(variable_path, "filtered_data.csv")
+      if (!file.exists(csv_path)) {
+        cat(sprintf("Missing filtered_data.csv in %s -> %s -> %s. Skipping...\n", gcm, scenario, variable))
+        next
+      }
+
+      # Read file paths
+      filtered_data <- read_csv(csv_path)
+      if (nrow(filtered_data) == 0) {
+        cat(sprintf(" All files processed for %s -> %s -> %s. Skipping...\n", gcm, scenario, variable))
+        next
+      }
+
+      for (file_path in filtered_data$File_Path) {
+        nc_file <- download_netcdf(file_path)
+        if (is.null(nc_file)) next
+
+        # Extract year
+        year <- gsub("\\D", "", regmatches(file_path, regexpr("_\\d{4}", file_path)))
+
+        # Extract data
+        station_data <- extract_station_data(nc_file, stations, variable)
+
+        # Save results
+        output_csv <- file.path(output_var_path, sprintf("%s_%s_%s_%s.csv", gcm, scenario, variable, year))
+
+        # Write CSV file (Date column will have exact timestamps)
+        fwrite(station_data, output_csv)
+        cat(sprintf("Saved: %s\n", output_csv))
+
+        # Delete NetCDF file if required
+        if (delete_NetCDF_file == "Yes") {
+          file.remove(nc_file)
+        }
+      }
+    }
+  }
+}
+```
+
+---
+
+## Section 2: Vertical Stacking of Annual CMIP6 Data
+In this section, we focus on merging annual CMIP6 extracted station data into a single CSV file for each GCM (General Circulation Model), scenario, and variable. This vertical stacking allows for easier data processing and analysis over a range of years.
+
+### 1. Input Files, Folder Structure, and Their Contents
+Before running this script, it's essential to understand the directory structure and input files.
+
+**1.1. Input Data**
+
+- The CMIP6 extracted data is stored in CSV files within a structured folder hierarchy.
+- Each CSV file represents a single year's worth of climate data extracted from NetCDF.
+- Filtered data CSV files (filtered_data.csv) are ignored in the merging process.
+
+**1.2. Folder Structure**
+
+The script follows a structured directory system:
+```plaintext
+📂 Outputs folder
+│── 📂 CMIP6 Data extracted from netcdfs      # Folder containing extracted CSVs
+│   │── 📂 ACCESS-CM2                          # GCM folder
+│   │   │── 📂 historical                      # Scenario folder
+│   │   │   │── 📂 pr                          # Variable folder (Precipitation)
+│   │   │   │   │── ACCESS-CM2_historical_pr_2000.csv
+│   │   │   │   │── ACCESS-CM2_historical_pr_2001.csv
+│   │   │   │   │── ...
+│   │   │   │── 📂 hurs                        # Variable folder (Relative Humidity)
+│   │   │   │   │── ACCESS-CM2_historical_hurs_2000.csv
+│   │   │   │   │── ACCESS-CM2_historical_hurs_2001.csv
+│
+📂 Outputs folder
+│── 📂 raw cmip6 csv                           # Processed (merged) CSVs
+│   │── 📂 ACCESS-CM2                          # GCM folder
+│   │   │── ACCESS-CM2_historical_pr_2000-2010.csv
+│   │   │── ACCESS-CM2_historical_hurs_2000-2010.csv
+│
+📂 R Script Folder
+│── cmip6_data_merge.R                         # This script for merging CSVs
+```
+
+### 2. Explanation of Key Script Components
+
+**2.1. Defining Directories**
+
+The script starts by defining the folders where the extracted station data is located and where the merged CSV files will be saved.
+- main_dir → Directory containing the yearly extracted CMIP6 station data.
+- output_dir → Directory where the merged, stacked CSVs will be saved.
+
+The script creates the output folder if it does not already exist. This prevents errors when saving files.
+
+### 3. Looping Through GCMs, Scenarios, and Variables
+The script iterates through the directory structure to process each GCM, scenario, and variable.
+
+**3.1. Get List of Available GCMs**
+
+- list.dirs(main_dir, recursive = FALSE) → Finds all available GCM folders.
+- Iterates over each GCM and extracts the folder name.
+
+**3.2. Loop Through Climate Scenarios**
+
+Inside each GCM folder, the script identifies available climate scenarios.
+- The script dynamically identifies and processes available climate scenarios (historical, ssp245, etc.).
+- It ensures compatibility with different CMIP6 projections.
+
+**3.3. Loop Through Climate Variables**
+
+Inside each scenario folder, the script finds and processes available climate variables.
+- Dynamically identifies variables such as pr (precipitation), hurs (relative humidity), etc.
+- The script ensures all available variables are processed.
+
+### 4. Merging CSV Files for Each Variable
+The script merges all yearly CSV files for each variable into a single file.
+
+**4.1. Get List of Available CSVs**
+
+- Finds all CSV files inside the variable folder.
+- Excludes filtered_data.csv, which is not part of the data.
+
+**4.2. Extract Year and Read Data**
+
+- Extracts the year from each file.
+- Reads the CSV and stores it in a list (dfs).
+- Stores the year values for later use.
+
+**4.3. Merge Data and Save Output**
+
+After reading the data, the script merges all files into a single dataset.
+
+- Combines all CSVs into a single dataframe (merged_df).
+- Identifies the start and end years of available data.
+- Constructs an output filename dynamically.
+
+**4.4. Save Merged Data**
+
+- Creates an output folder for each GCM.
+- Saves the merged CSV file inside the respective GCM folder.
+
+
+### 5. Handling Missing Data
+
+If no CSV files are found for a given variable, the script displays a warning.This ensures that the script does not crash if data is missing.
+
+### 6. Final Completion Message
+Once all files are processed, the script displays a final message. This confirms that all available data has been stacked successfully.
+
+
+**Summary of the Vertical Stacking Process**
+
+  1. Identifies available GCMs, scenarios, and variables.
+  2. Finds and reads all yearly CSVs for each variable. 
+  3. Extracts data and merges it into a single file per GCM-scenario-variable.
+  4. Saves the final stacked dataset in a structured format.
+  5. Handles missing data and ensures smooth execution.
+
+This step is crucial for bias correction and further analysis, making CMIP6 data more manageable and accessible.
+
+---
+
+## 2. Vertical stacking of annaual cmip6 data
+
+```{r}
+# Load required libraries
+library(dplyr)
+library(readr)
+library(stringr)
+
+# Define directories
+main_dir <- here("..", "Outputs folder", "CMIP6 Data extracted from netcdfs")
+output_dir <- here("..", "Outputs folder", "raw cmip6 csv")
+
+# Create output directory if it doesn't exist
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+}
+
+# Get all GCM folders in the main directory
+gcm_folders <- list.dirs(main_dir, recursive = FALSE)
+
+for (gcm_folder in gcm_folders) {
+  gcm_name <- basename(gcm_folder)
+  cat(sprintf("Processing GCM: %s\n", gcm_name))
+
+  # Get all scenario folders inside the GCM folder
+  scenario_folders <- list.dirs(gcm_folder, recursive = FALSE)
+
+  for (scenario_folder in scenario_folders) {
+    scenario_name <- basename(scenario_folder)
+
+    # Get all variable folders inside the scenario folder
+    variable_folders <- list.dirs(scenario_folder, recursive = FALSE)
+
+    for (variable_folder in variable_folders) {
+      variable_name <- basename(variable_folder)
+
+      cat(sprintf("Processing: %s > %s > %s\n", gcm_name, scenario_name, variable_name))
+
+      # Initialize empty list for DataFrames and year tracking
+      dfs <- list()
+      years_list <- c()
+
+      # Get all CSV files in the variable folder (excluding "filtered_data.csv")
+      csv_files <- list.files(variable_folder, pattern = ".*\\.csv$", full.names = TRUE)
+      csv_files <- csv_files[!grepl("filtered_data.csv", csv_files)]
+
+      for (file_path in csv_files) {
+        # Extract year from filename
+        file_name <- basename(file_path)
+        year_match <- str_extract(file_name, "_\\d{4}\\.csv$")
+        if (!is.na(year_match)) {
+          year <- as.integer(str_extract(year_match, "\\d{4}"))
+          years_list <- c(years_list, year)
+
+          # Read CSV
+          df <- read_csv(file_path, show_col_types = FALSE)
+          dfs <- append(dfs, list(df))
+        }
+      }
+
+      if (length(dfs) > 0) {
+        # Merge all DataFrames
+        merged_df <- bind_rows(dfs)
+
+        # Get min and max year
+        start_year <- min(years_list, na.rm = TRUE)
+        end_year <- max(years_list, na.rm = TRUE)
+
+        # Construct output filename
+        output_filename <- sprintf("%s_%s_%s_%d-%d.csv", gcm_name, scenario_name, variable_name, start_year, end_year)
+
+        # Create GCM folder inside raw cmip6 csv folder
+        gcm_output_folder <- file.path(output_dir, gcm_name)
+        if (!dir.exists(gcm_output_folder)) {
+          dir.create(gcm_output_folder, recursive = TRUE)
+        }
+
+        # Define full output path
+        output_path <- file.path(gcm_output_folder, output_filename)
+
+        # Save merged DataFrame
+        write_csv(merged_df, output_path)
+
+        cat(sprintf("Saved merged CSV: %s\n", output_path))
+      } else {
+        cat(sprintf("No CSV files found in: %s\n", variable_folder))
+      }
+    }
+  }
+}
+
+cat("Processing complete.\n")
+
+
+```
+
+---
+
+## Section 3: Performing Unit Conversion
+This section focuses on converting CMIP6 climate variables to appropriate units for consistency with observational datasets. Since CMIP6 outputs data in scientific units, we need to apply unit conversions before proceeding with bias correction.
+
+### 1. Understanding Input Files and Folder Structure
+
+**1.1. Input Data**
+
+The script reads raw CMIP6 data in CSV format from Section 2. The data is organized in a structured directory format where each GCM (General Circulation Model) has its own folder.
+
+**1.2. Folder Structure**
+
+Before and after running this script, the directory structure changes as follows:
+
+**Before Unit Conversion (Input Directory)**
+```plaintext
+📂 Outputs folder
+│── 📂 raw cmip6 csv                     # Raw data (before conversion)
+│   │── 📂 ACCESS-CM2                     # GCM folder
+│   │   │── ACCESS-CM2_historical_pr_2000-2010.csv
+│   │   │── ACCESS-CM2_historical_hurs_2000-2010.csv
+│   │   │── ACCESS-CM2_historical_tasmax_2000-2010.csv
+│   │   │── ACCESS-CM2_historical_tasmin_2000-2010.csv
+│   │   │── ACCESS-CM2_historical_sfcWind_2000-2010.csv
+│
+📂 R Script Folder
+│── unit_conversion.R                    # This script for conversion
+```
+
+**After Unit Conversion (Output Directory)**
+
+```Plaintext
+📂 Outputs folder
+│── 📂 raw cmip6 unit converted csv       # Processed (unit-converted) data
+│   │── 📂 pr                              # Precipitation folder
+│   │   │── ACCESS-CM2_historical_pr_2000-2010.csv
+│   │── 📂 hurs                            # Relative Humidity folder
+│   │   │── ACCESS-CM2_historical_hurs_2000-2010.csv
+│   │── 📂 tasmax                          # Maximum Temperature folder
+│   │   │── ACCESS-CM2_historical_tasmax_2000-2010.csv
+│   │── 📂 tasmin                          # Minimum Temperature folder
+│   │   │── ACCESS-CM2_historical_tasmin_2000-2010.csv
+│   │── 📂 sfcWind                         # Wind Speed folder
+│   │   │── ACCESS-CM2_historical_sfcWind_2000-2010.csv
+```
+
+### 2. Explanation of the Script
+This script automates the unit conversion for different climate variables.
+
+**2.1. Load Required Libraries**
+
+- dplyr → Used for data manipulation.
+- data.table → Efficient data handling and processing.
+- readr → For reading and writing CSV files.
+- stringr → Used for string operations such as identifying variable names.
+
+**2.2. Define Input and Output Directories**
+
+- input_folder → Folder containing raw CMIP6 CSVs.
+- output_folder → Folder where unit-converted CSVs will be saved.
+- If the output folder does not exist, it is created automatically.
+
+**2.3. Process Each GCM**
+
+The script iterates over each GCM folder inside the input directory:
+
+- list.dirs(input_folder, full.names = TRUE, recursive = FALSE) → Retrieves available GCM folders.
+- The GCM name is extracted dynamically.
+
+**2.4. Identify and Process CSV Files**
+
+- Identifies the climate variable (pr, tasmax, tasmin, hurs, sfcWind) from the filename.
+- If the variable is not recognized, it is assigned "other" (no conversion applied).
+
+**2.5. Create Variable-Specific Output Folder**
+
+- Each variable (e.g., pr, tasmax) gets its own folder inside output_folder.
+
+**2.6. Read the CSV File**
+
+- Loads the CSV into memory efficiently using data.table::fread().
+
+**2.7. Apply Unit Conversions**
+
+The script performs unit conversions based on the variable type:
+
+- Precipitation (pr): Converts kg/m²/s → mm/day by multiplying values by 86400.
+- Temperature (tasmax, tasmin): Converts Kelvin → Celsius by subtracting 273.15.
+- Other variables: No modification, file is copied as is.
+
+**2.8. Save Converted Data**
+
+- Saves the converted CSV file inside the appropriate variable-specific folder.
+
+### 3. Handling Missing Data
+If a variable is not recognized, it is assigned "other", and no unit conversion is applied.  This prevents errors if an unexpected file format appears.
+
+### 4. Final Completion Message
+Once all files are processed, the script prints a completion message. This ensures that all unit conversions have been successfully applied.
+
+
+**Summary of Unit Conversion Process**
+
+1. Identifies available GCMs and corresponding CSV files.
+2. Dynamically detects climate variables from file names.
+3. Creates separate folders for each variable in the output directory.
+4. Applies necessary unit conversions:
+     - Precipitation → kg/m²/s to mm/day.
+     - Temperature → Kelvin to Celsius.
+     - Other variables remain unchanged.
+
+5. Saves processed files in a structured format.
+6. Handles missing data gracefully.
+
+This step ensures consistency across all climate variables, allowing for accurate analysis and bias correction. 
+ 
+---
+ 
+##  3. Performing unit conversion
+
+```{r}
+# Load required libraries
+library(dplyr)
+library(data.table)
+library(readr)
+library(stringr)
+
+# Define input & output directories
+#input_folder <- "C:/Users/revan/Desktop/R Script workup for workshop/Outputs folder/raw cmip6 csv"
+#output_folder <- "C:/Users/revan/Desktop/R Script workup for workshop/Outputs folder/raw cmip6 unit converted csv"
+input_folder <- here("..", "Outputs folder", "raw cmip6 csv")
+output_folder <- here("..", "Outputs folder", "raw cmip6 unit converted csv")
+
+# Ensure the output directory exists
+if (!dir.exists(output_folder)) {
+  dir.create(output_folder, recursive = TRUE)
+}
+
+# List all GCM folders inside the input directory
+gcm_folders <- list.dirs(input_folder, full.names = TRUE, recursive = FALSE)
+
+# Process each GCM folder
+for (gcm_folder in gcm_folders) {
+
+  gcm_name <- basename(gcm_folder)  # Extract GCM name
+
+  # List all CSV files in the GCM folder
+  csv_files <- list.files(gcm_folder, pattern = "\\.csv$", full.names = TRUE)
+
+  # Process each CSV file
+  for (file_path in csv_files) {
+
+    # Extract filename
+    file_name <- basename(file_path)
+
+    # Identify the variable from the filename
+    if (grepl("_pr_", file_name)) {
+      variable <- "pr"
+    } else if (grepl("_tasmax_", file_name)) {
+      variable <- "tasmax"
+    } else if (grepl("_tasmin_", file_name)) {
+      variable <- "tasmin"
+    } else if (grepl("_hurs_", file_name)) {
+      variable <- "hurs"
+    } else if (grepl("_sfcWind_", file_name)) {
+      variable <- "sfcWind"
+    } else {
+      variable <- "other"
+    }
+
+    # Define the variable-specific output folder
+    output_var_folder <- file.path(output_folder, variable)
+
+    # Ensure the variable output directory exists
+    if (!dir.exists(output_var_folder)) {
+      dir.create(output_var_folder, recursive = TRUE)
+    }
+
+    # Read CSV file
+    df <- fread(file_path)
+
+    # Apply unit conversions where necessary
+    if (variable == "pr") {
+      cat(sprintf("Processing precipitation file: %s (Converting kg/m²/s to mm/day)\n", file_name))
+      df[, (names(df)[-1]) := lapply(.SD, function(x) as.numeric(x) * 86400), .SDcols = -1]
+    } else if (variable %in% c("tasmax", "tasmin")) {
+      cat(sprintf("Processing temperature file: %s (Converting Kelvin to Celsius)\n", file_name))
+      df[, (names(df)[-1]) := lapply(.SD, function(x) as.numeric(x) - 273.15), .SDcols = -1]
+    } else {
+      cat(sprintf("Copying file without modification: %s\n", file_name))
+    }
+
+    # Define output file path inside the respective variable folder
+    output_file <- file.path(output_var_folder, file_name)
+
+    # Save converted or copied CSV
+    fwrite(df, output_file)
+    cat(sprintf("Saved: %s\n", output_file))
+  }
+}
+
+cat("Processing complete! All files saved in variable-specific folders.\n")
+
+```
+
+---
+
+## Section 4: Bias Correction using Random Forest for All GCMs, Variables, and Scenarios
+
+### Introduction
+This section focuses on applying bias correction to CMIP6 climate projections using the Random Forest Machine Learning model. The script corrects biases by learning the relationship between historical CMIP6 simulations and observed data, then applying this correction to future climate projections.
+
+---
+
+### 1. Understanding Input Files and Folder Structure
+
+**1.1. Input Data**
+
+The script processes CMIP6 climate data after unit conversion (Section 3) and applies bias correction based on observed climate data.
+
+**1.2. Folder Structure**
+
+The files are stored and processed in the following directory structure:
+
+**Before Bias Correction (Input Directory)**
+```Plaintext
+📂 Outputs folder
+│── 📂 raw cmip6 unit converted csv          # Unit-converted CMIP6 data
+│   │── 📂 pr                                 # Precipitation
+│   │   │── ACCESS-CM2_historical_pr_2000-2010.csv
+│   │   │── ACCESS-CM2_ssp245_pr_2020-2030.csv
+│   │── 📂 tasmax                             # Max Temperature
+│   │── 📂 tasmin                             # Min Temperature
+│   │── 📂 hurs                               # Relative Humidity
+│   │── 📂 sfcWind                            # Wind Speed
+│
+📂 Inputs Folder
+│── 📂 Observed_Climate_Variables            # PRISM Observed Data
+│   │── pcp_mm.csv
+│   │── tmp_max_c.csv
+│   │── tmp_min_c.csv
+│   │── hmd_percent.csv
+│   │── wnd_mps.csv
+│
+📂 R Script Folder
+│── bias_correction.R                        # This script
+
+*After Bias Correction (Output Directory)*
+
+📂 Outputs folder
+│── 📂 bias corrected cmip6 csv              # Bias-corrected CMIP6 data
+│   │── 📂 pr                                 # Precipitation
+│   │   │── ACCESS-CM2_historical_RFcorrected_pr_2000-2010.csv
+│   │   │── ACCESS-CM2_ssp245_RFcorrected_pr_2020-2030.csv
+│   │── 📂 tasmax                             # Max Temperature
+│   │── 📂 tasmin                             # Min Temperature
+│   │── 📂 hurs                               # Relative Humidity
+│   │── 📂 sfcWind                            # Wind Speed
+```
+
+---
+
+### 2. Explanation of the Script
+
+The script automates the bias correction process by:
+
+  1. Reading CMIP6 historical data and PRISM observed data.
+  2. Training a Random Forest model to learn the relationship between them.
+  3. Applying the trained model to correct biases in future CMIP6 projections.
+  4. Saving bias-corrected data for each variable, GCM, and scenario.
+
+**2.1. Load Required Libraries**
+
+- randomForest → Implements the Random Forest Regression Model for bias correction.
+- readr → Reads CMIP6 and observed data CSV files.
+- dplyr → Handles data manipulation.
+- stringr → Extracts GCM names, scenarios, and year ranges from file names.
+
+**2.2. Define Paths for Input and Output Data**
+
+- cmip6_base_folder → Contains unit-converted CMIP6 files (input data).
+- output_base_folder → Stores bias-corrected output data.
+
+**2.3. Define Climate Variables and Corresponding Observed Data**
+
+- Maps CMIP6 variables to corresponding PRISM observed data.
+
+**2.4. Define Station List**
+
+- These stations represent point locations where data will be extracted.
+
+**2.5. Loop through Each Variable**
+
+- Iterates through each climate variable (pr, tasmax, etc.).
+- Skips missing variables to avoid errors.
+
+**2.6. Read Observed Data**
+
+- Checks if the observed PRISM data file exists.
+- Reads observed data only if available.
+
+**2.7. Extract GCM Names Dynamically**
+
+- Extracts GCM names dynamically from filenames.
+
+**2.8. Train Random Forest on Historical Data**
+
+- Trains a Random Forest model on historical data for each station.
+
+**2.9. Apply Bias Correction to Future Scenarios**
+
+- Uses trained models to correct future CMIP6 projections.
+- Saves bias-corrected datasets.
+
+---
+
+**Summary**
+
+    ✔ Trains Random Forest on historical CMIP6 vs. observed data.
+    ✔ Applies trained correction to future projections.
+    ✔ Handles missing files dynamically.
+    ✔ Saves corrected data for all variables, GCMs, and scenarios. 
+
+---
+
+## 4. Working script for bias correction - All combinations of gcm, variables and ssp scenarios.
+```{r}
+# Load necessary libraries
+library(randomForest)
+library(readr)
+library(dplyr)
+library(stringr)
+
+# Define base directories
+cmip6_base_folder <- here("..", "Outputs folder", "raw cmip6 unit converted csv")
+output_base_folder <- here("..", "Outputs folder", "bias corrected cmip6 csv")
+observed_folder <- here("..", "Inputs Folder", "Observed_Climate_Variables")
+
+# Define variable-to-observed file mapping
+variables <- list(
+  "pr" = "pcp_mm.csv",
+  "hurs" = "hmd_percent.csv",
+  "tasmax" = "tmp_max_c.csv",
+  "tasmin" = "tmp_min_c.csv",
+  "sfcWind" = "wnd_mps.csv"
+)
+
+# Loop through each variable
+for (variable in names(variables)) {
+
+  # Define paths for this variable
+  cmip6_folder <- file.path(cmip6_base_folder, variable)
+  output_folder <- file.path(output_base_folder, variable)
+  observed_file <- file.path(observed_folder, variables[[variable]])
+
+  # Ensure output folder exists
+  if (!dir.exists(output_folder)) {
+    dir.create(output_folder, recursive = TRUE)
+  }
+
+  # Check if observed data exists
+  if (!file.exists(observed_file)) {
+    cat(sprintf("Observed data file missing for '%s'. Skipping...\n", variable))
+    next
+  }
+
+  # Read observed data
+  obs <- read_csv(observed_file, show_col_types = FALSE)
+
+  # Get GCM names dynamically from available files
+  file_list <- list.files(cmip6_folder, pattern = "\\.csv$", full.names = FALSE)
+  gcm_names <- unique(sapply(strsplit(file_list, "_"), `[`, 1))  # Extract GCM names
+  
+
+  # Loop through each GCM
+  for (gcm_name in gcm_names) {
+    print(paste("🔹 Processing GCM:", gcm_name, "for variable:", variable))
+
+    # Get historical data file
+    historical_file <- file_list[grepl(paste0("^", gcm_name, "_historical"), file_list)]
+
+    if (length(historical_file) == 0) {
+      cat(sprintf("No historical data found for %s (%s). Skipping...\n", gcm_name, variable))
+      next  # Skip this GCM
+    }
+
+    # Extract historical file path and year range
+    historical_year <- str_extract(historical_file, "\\d{4}-\\d{4}")
+    historical_path <- file.path(cmip6_folder, historical_file)
+
+    # Read historical data
+    mod_hist <- read_csv(historical_path, show_col_types = FALSE)
+
+    # **Find available stations dynamically**
+    available_stations <- setdiff(names(mod_hist), "Date")  # Exclude Date column
+    available_stations <- intersect(available_stations, names(obs))  # Ensure stations exist in observed data
+
+    # **Ensure at least one valid station exists**
+    if (length(available_stations) == 0) {
+      cat(sprintf("No common stations found for GCM: %s and variable: %s. Skipping...\n", gcm_name, variable))
+      next
+    }
+
+    # **Filter data for only available stations**
+    mod_hist <- mod_hist[, c("Date", available_stations), drop = FALSE]
+    obs_filtered <- obs[, c("Date", available_stations), drop = FALSE]
+
+    # Prepare bias correction model for each station
+    rf_models <- list()
+    for (st in available_stations) {
+      obs_data <- obs_filtered[, c("Date", st), drop = FALSE]
+      mod_data <- mod_hist[, c("Date", st), drop = FALSE]
+
+      # Remove NA values
+      obs_data <- obs_data[!is.na(obs_data[[st]]), ]
+      mod_data <- mod_data[!is.na(mod_data[[st]]), ]
+
+      # Ensure common dates
+      common_dates <- intersect(obs_data$Date, mod_data$Date)
+      obs_data <- obs_data[obs_data$Date %in% common_dates, ]
+      mod_data <- mod_data[mod_data$Date %in% common_dates, ]
+
+      # Check if data is valid
+      if (nrow(obs_data) == 0 || nrow(mod_data) == 0) {
+        warning(paste("No common data for station:", st, "in", gcm_name, "for variable:", variable))
+        next
+      }
+
+      # Train Random Forest model
+      x_train <- data.frame(Predictor = mod_data[[st]])
+      y_train <- obs_data[[st]]
+      rf_models[[st]] <- randomForest(x = x_train, y = y_train, ntree = 500, importance = TRUE)
+
+      # Apply bias correction to historical dataset
+      mod_hist[[st]] <- predict(rf_models[[st]], newdata = data.frame(Predictor = mod_hist[[st]]))
+    }
+
+    # Save bias-corrected historical dataset
+    output_hist_file <- file.path(output_folder, paste0(gcm_name, "_historical_RFcorrected_", variable, "_", historical_year, ".csv"))
+    write_csv(mod_hist, output_hist_file)
+    print(paste("Bias-corrected historical data saved for:", gcm_name, "Variable:", variable))
+
+    # Extract available future scenarios
+    future_scenarios <- unique(sapply(strsplit(file_list[grepl(paste0("^", gcm_name, "_ssp"), file_list)], "_"), `[`, 2))
+
+    if (length(future_scenarios) == 0) {
+      print(paste("No future scenarios available for", gcm_name, "Variable:", variable))
+      next
+    }
+
+    # Loop through each available future scenario
+    for (scenario_name in future_scenarios) {
+      scenario_files <- file_list[grepl(paste0("^", gcm_name, "_", scenario_name), file_list)]
+
+      for (scenario_file in scenario_files) {
+        # Extract year range dynamically
+        scenario_year <- str_extract(scenario_file, "\\d{4}-\\d{4}")
+        scenario_path <- file.path(cmip6_folder, scenario_file)
+
+        # Read scenario data
+        mod_scenario <- read_csv(scenario_path, show_col_types = FALSE)
+
+        # **Filter only available stations**
+        mod_scenario <- mod_scenario[, c("Date", available_stations), drop = FALSE]
+
+        # Apply bias correction using the trained historical model
+        for (st in available_stations) {
+          if (!is.null(rf_models[[st]])) {
+            mod_scenario[[st]] <- predict(rf_models[[st]], newdata = data.frame(Predictor = mod_scenario[[st]]))
+          }
+        }
+
+        # Save bias-corrected scenario dataset
+        output_scenario_file <- file.path(output_folder, paste0(gcm_name, "_", scenario_name, "_RFcorrected_", variable, "_", scenario_year, ".csv"))
+        write_csv(mod_scenario, output_scenario_file)
+        print(paste("Bias-corrected", scenario_name, "data saved for:", gcm_name, "Variable:", variable, "(", scenario_year, ")"))
+      }
+    }
+  }
+}
+
+# Completion message
+print("Bias correction completed for all available variables, GCMs, and scenarios.")
+```
+
+---
+
+## Section 5: Bias-Correction Performance Metrics Calculation
+
+### Introduction
+
+In this section, we evaluate the performance of the bias-correction applied to CMIP6 data. The script compares raw CMIP6 data, bias-corrected CMIP6 data, and observed PRISM data to compute multiple statistical performance metrics for each climate variable, GCM, and scenario.
+
+---
+
+### 1. Understanding Input Files and Folder Structure
+This script requires observed climate data, raw CMIP6 data, and bias-corrected CMIP6 data to compute evaluation metrics.
+
+**1.1. Folder Structure**
+
+**Input Files**
+
+```Plaintext
+📂 Inputs Folder
+│── 📂 Observed_Climate_Variables              # PRISM Observed Data
+│   │── pcp_mm.csv                             # Precipitation (mm)
+│   │── tmp_max_c.csv                          # Max Temperature (°C)
+│   │── tmp_min_c.csv                          # Min Temperature (°C)
+│   │── hmd_percent.csv                        # Relative Humidity (%)
+│   │── wnd_mps.csv                            # Wind Speed (m/s)
+│
+📂 Outputs folder
+│── 📂 raw cmip6 unit converted csv           # Unit-converted raw CMIP6 data
+│   │── 📂 pr
+│   │── 📂 hurs
+│   │── 📂 tasmax
+│   │── 📂 tasmin
+│   │── 📂 sfcWind
+│
+│── 📂 bias corrected cmip6 csv               # Bias-corrected CMIP6 data
+│   │── 📂 pr
+│   │── 📂 hurs
+│   │── 📂 tasmax
+│   │── 📂 tasmin
+│   │── 📂 sfcWind
+│
+📂 R Script Folder
+│── bias_correction_metrics.R                 # This script
+```
+
+**Output Files**
+
+```plaintext
+📂 Outputs folder
+│── 📂 Bias_Correction_Metrics                # Folder where metrics will be saved
+│   │── Bias_Correction_Metrics_pr.csv
+│   │── Bias_Correction_Metrics_hurs.csv
+│   │── Bias_Correction_Metrics_tasmax.csv
+│   │── Bias_Correction_Metrics_tasmin.csv
+│   │── Bias_Correction_Metrics_sfcWind.csv
+```
+
+---
+
+### 2. Explanation of the Script
+The script calculates bias correction performance metrics for each station, variable, GCM, and scenario.
+
+Performance metrics calculated:
+    - PBIAS: Percentage bias between simulated and observed values.
+    - RMSE: Root Mean Squared Error.
+    - R²: Coefficient of determination.
+    - KGE: Kling-Gupta Efficiency.
+    - NSE: Nash-Sutcliffe Efficiency.
+    - NRMSE: Normalized Root Mean Squared Error.
+
+**2.1. Load Required Libraries**
+
+- hydroGOF: Used to compute statistical metrics for hydrological and climate data.
+
+**2.2. Define File Paths**
+
+- observed_folder → Contains PRISM observed climate data.
+- raw_cmip6_folder → Contains unit-converted raw CMIP6 data.
+- bias_corrected_folder → Stores bias-corrected CMIP6 data.
+- metrics_output_base → Defines where the evaluation results will be saved.
+
+**2.3. Define Climate Variables and Observed Data**
+
+- Maps CMIP6 variables to their corresponding PRISM observed data files.
+
+**2.4. Loop through Each Variable**
+
+- Iterates through each variable.
+- Skips variables if observed data is missing.
+
+**2.5. Read Observed Data**
+
+- Reads observed PRISM climate data.
+- Converts date column to the correct format.
+
+**2.6. Define Paths for Raw and Bias-Corrected CMIP6 Data**
+
+- Defines file paths for raw and bias-corrected CMIP6 data.
+- Specifies output file where evaluation metrics will be saved.
+
+**2.7. Read and Match CMIP6 Data**
+
+- Finds all raw and bias-corrected CMIP6 files for the current variable.
+- Finds corresponding bias-corrected file for each raw CMIP6 file.
+- Skips scenarios where bias correction is missing.
+
+**2.8. Find Common Stations and Dates**
+
+- Ensures that only matching stations and dates are used for evaluation.
+
+**2.9. Compute Performance Metrics**
+
+- Computes bias correction performance metrics for each station.
+
+---
+
+**Summary**
+    
+    ✔ Calculates performance metrics (RMSE, NSE, KGE, etc.).
+    ✔ Ensures data is matched by station and date.
+    ✔ Handles missing files dynamically.
+    ✔ Saves results to separate CSV files for each variable. 
+
+---
+
+## 5. Working script for calculation of Bias-correction performance metrics.
+
+```{r}
+# 2.1. Load Required Libraries
+library(data.table)
+library(dplyr)
+library(lubridate)
+library(hydroGOF)  # For NSE, RMSE, KGE
+
+# 2.2. Define File Paths
+observed_folder <- here("..", "Inputs Folder", "Observed_Climate_Variables")
+raw_cmip6_folder <- here("..", "Outputs folder", "raw cmip6 unit converted csv")
+bias_corrected_folder <- here("..", "Outputs folder", "bias corrected cmip6 csv")
+metrics_output_base <- here("..", "Outputs folder")
+
+# 2.3. Define Climate Variables and Observed Data file mapping
+variable_map <- list(
+  "pr" = "pcp_mm.csv",
+  "hurs" = "hmd_percent.csv",
+  "tasmax" = "tmp_max_c.csv",
+  "tasmin" = "tmp_min_c.csv",
+  "sfcWind" = "wnd_mps.csv"
+)
+
+# 2.4. Loop through Each Variable
+for (var in names(variable_map)) {
+
+  obs_file <- file.path(observed_folder, variable_map[[var]])
+
+  # Skip if observed data file is missing
+  if (!file.exists(obs_file)) {
+    cat(sprintf("Observed data not found for %s. Skipping...\n", var))
+    next
+  }
+
+  # 2.5. Read Observed Data
+  obs_data <- fread(obs_file)
+  obs_data[, Date := as.Date(Date, format = "%d/%m/%Y")]  # Convert date format
+
+  # 2.6. Define Paths for Raw and Bias-Corrected CMIP6 Data
+  raw_var_folder <- file.path(raw_cmip6_folder, var)
+  bias_var_folder <- file.path(bias_corrected_folder, var)
+  metrics_output_file <- file.path(metrics_output_base, paste0("Bias_Correction_Metrics_", var, ".csv"))
+
+  # Skip if variable folder does not exist or no files present
+  if (!dir.exists(raw_var_folder) | !dir.exists(bias_var_folder)) {
+    cat(sprintf("No CMIP6 data found for %s. Skipping...\n", var))
+    next
+  }
+  # 2.7. Read and Match CMIP6 Data
+  raw_files <- list.files(raw_var_folder, pattern = "\\.csv$", full.names = TRUE)
+  bias_files <- list.files(bias_var_folder, pattern = "\\.csv$", full.names = TRUE)
+
+  # Initialize results list for the variable
+  results <- list()
+
+  # Loop through each file in the raw data folder
+  for (raw_file in raw_files) {
+
+    file_parts <- strsplit(basename(raw_file), "_")[[1]]
+    gcm_name <- file_parts[1]  # Extract GCM name
+    scenario_name <- file_parts[2]  # Extract scenario name
+    year_range <- gsub("\\.csv$", "", file_parts[4])  # Extract year range
+
+    # Construct the expected bias-corrected filename
+    expected_bias_file <- paste0(gcm_name, "_", scenario_name, "_RFcorrected_", var, "_", year_range, ".csv")
+
+    # Find matching bias-corrected file
+    bias_file_path <- file.path(bias_var_folder, expected_bias_file)
+
+    if (!file.exists(bias_file_path)) {
+      cat(sprintf("No bias-corrected data found for %s %s. Skipping...\n", gcm_name, scenario_name))
+      next
+    }
+
+    # Read raw and bias-corrected CMIP6 data
+    raw_data <- fread(raw_file)
+    bias_data <- fread(bias_file_path)
+
+    # Convert Date column to Date format
+    raw_data[, Date := as.Date(Date, format = "%d/%m/%Y")]
+    bias_data[, Date := as.Date(Date, format = "%d/%m/%Y")]
+
+    # 2.8. Find Common Stations and Dates
+    # Step 1: Find common stations dynamically
+    common_stations <- Reduce(intersect, list(names(obs_data), names(raw_data), names(bias_data)))
+
+    # Step 2: Skip if no common stations found (only "Date" column remains)
+    if (length(common_stations) <= 1) {
+      cat(sprintf("No common stations for %s %s. Skipping...\n", gcm_name, scenario_name))
+      next
+    }
+
+    # Step 3: Find common dates dynamically
+    common_dates <- Reduce(intersect, list(obs_data$Date, raw_data$Date, bias_data$Date))
+
+    # Step 4: Filter datasets for common dates & stations
+    obs_filtered  <- obs_data[Date %in% common_dates, c("Date", common_stations), with = FALSE]
+    raw_filtered  <- raw_data[Date %in% common_dates, c("Date", common_stations), with = FALSE]
+    bias_filtered <- bias_data[Date %in% common_dates, c("Date", common_stations), with = FALSE]
+
+    # Step 5: Ensure Date column remains properly formatted
+    obs_filtered[, Date := as.Date(Date)]
+    raw_filtered[, Date := as.Date(Date)]
+    bias_filtered[, Date := as.Date(Date)]
+
+    # Loop through each station
+    for (station in common_stations[-1]) {  # Skip "Date" column
+      obs_values <- obs_filtered[[station]]
+      raw_values <- raw_filtered[[station]]
+      bias_values <- bias_filtered[[station]]
+
+      # Ensure no missing values before computing metrics
+      if (all(is.na(obs_values)) | all(is.na(raw_values)) | all(is.na(bias_values))) {
+        cat(sprintf("Skipping station %s for %s %s due to missing data.\n", station, gcm_name, scenario_name))
+        next
+      }
+
+      # 2.9. Compute Performance Metrics
+      raw_pbias <- ifelse(length(na.omit(raw_values)) > 0, pbias(raw_values, obs_values), NA)
+      bias_pbias <- ifelse(length(na.omit(bias_values)) > 0, pbias(bias_values, obs_values), NA)
+
+      raw_rmse <- ifelse(length(na.omit(raw_values)) > 0, rmse(raw_values, obs_values), NA)
+      bias_rmse <- ifelse(length(na.omit(bias_values)) > 0, rmse(bias_values, obs_values), NA)
+
+      raw_r2 <- ifelse(length(na.omit(raw_values)) > 1, cor(raw_values, obs_values, use = "complete.obs")^2, NA)
+      bias_r2 <- ifelse(length(na.omit(bias_values)) > 1, cor(bias_values, obs_values, use = "complete.obs")^2, NA)
+
+      raw_kge <- ifelse(length(na.omit(raw_values)) > 0, KGE(raw_values, obs_values), NA)
+      bias_kge <- ifelse(length(na.omit(bias_values)) > 0, KGE(bias_values, obs_values), NA)
+
+      raw_nse <- ifelse(length(na.omit(raw_values)) > 0, NSE(raw_values, obs_values), NA)
+      bias_nse <- ifelse(length(na.omit(bias_values)) > 0, NSE(bias_values, obs_values), NA)
+
+      raw_nrmse <- ifelse(length(na.omit(raw_values)) > 0, raw_rmse / (max(obs_values, na.rm = TRUE) - min(obs_values, na.rm = TRUE)), NA)
+      bias_nrmse <- ifelse(length(na.omit(bias_values)) > 0, bias_rmse / (max(obs_values, na.rm = TRUE) - min(obs_values, na.rm = TRUE)), NA)
+
+      # Store results
+      results <- rbindlist(list(results, data.table(
+        Variable = var, GCM = gcm_name, Scenario = scenario_name, YearRange = year_range, Station = station,
+        Raw_Pbias = raw_pbias, BiasCorrected_Pbias = bias_pbias,
+        Raw_RMSE = raw_rmse, BiasCorrected_RMSE = bias_rmse,
+        Raw_R2 = raw_r2, BiasCorrected_R2 = bias_r2,
+        Raw_KGE = raw_kge, BiasCorrected_KGE = bias_kge,
+        Raw_NSE = raw_nse, BiasCorrected_NSE = bias_nse,
+        Raw_NRMSE = raw_nrmse, BiasCorrected_NRMSE = bias_nrmse
+      )))
+
+    }
+  }
+
+  # Save metrics results to a separate CSV for each variable
+  if (length(results) > 0) {
+    fwrite(results, metrics_output_file)
+    print(sprintf("Bias correction metrics saved for %s!", var))
+  } else {
+    print(sprintf("No results to save for %s.", var))
+  }
+}
+
+print("Bias correction metrics saved for all available variables!")
+
+```
+
+---
+
+## Section 6: Plotting Bias Correction Performance Statistics
+
+### Introduction
+This section focuses on visualizing the impact of bias correction by comparing raw CMIP6 data, bias-corrected CMIP6 data, and observed PRISM data using Cumulative Distribution Function (CDF) plots. These plots help assess how well the bias correction method improves the agreement between CMIP6 simulated data and PRISM observed data.
+
+---
+
+### 1. Understanding Input Files and Folder Structure
+
+The script requires three datasets for each climate variable:
+
+  - Observed PRISM data (Reference dataset)
+  - Raw CMIP6 data (Before bias correction)
+  - Bias-corrected CMIP6 data (After applying the correction)
+
+**1.1. Folder Structure**
+
+**Input Files**
+
+```Plaintext
+📂 Inputs Folder
+│── 📂 Observed_Climate_Variables
+│   │── pcp_mm.csv       # Precipitation (mm)
+│   │── tmp_max_c.csv    # Max Temperature (°C)
+│   │── tmp_min_c.csv    # Min Temperature (°C)
+│   │── hmd_percent.csv  # Relative Humidity (%)
+│   │── wnd_mps.csv      # Wind Speed (m/s)
+│
+📂 Outputs folder
+│── 📂 raw cmip6 unit converted csv  # CMIP6 raw data (converted to correct units)
+│   │── 📂 pr
+│   │── 📂 hurs
+│   │── 📂 tasmax
+│   │── 📂 tasmin
+│   │── 📂 sfcWind
+│
+│── 📂 bias corrected cmip6 csv  # Bias-corrected CMIP6 data
+│   │── 📂 pr
+│   │── 📂 hurs
+│   │── 📂 tasmax
+│   │── 📂 tasmin
+│   │── 📂 sfcWind
+│
+📂 R Script Folder
+│── plot_bias_correction_statistics.R # This script
+```
+
+**Outputs (CDF Plots)**
+
+CDF plots will be displayed directly in the R Markdown notebook or R Console.
+
+---
+
+### 2. Explanation of the Script
+
+The script:
+
+  - Finds and loads the required CMIP6 files (both raw and bias-corrected)
+  - Loads the corresponding observed dataset
+  - Extracts data for a specific station
+  - Computes CDFs for the three datasets
+  - Generates a CDF plot for comparison
+
+**2.1. Load Required Libraries**
+
+- gplot2: Used for plotting CDF curves.
+- stringr: Extracts year ranges dynamically from filenames.
+- data.table: Efficient data handling.
+
+**2.2. Define User Inputs**
+
+- GCM_Name → The General Circulation Model (GCM) to analyze.
+- Station → The station for which data should be plotted.
+
+**2.3. Define File Paths**
+
+- base_raw_data_folder → Contains unit-converted CMIP6 raw data.
+- base_bias_corrected_folder → Contains bias-corrected CMIP6 data.
+- observed_data_folder → Contains PRISM observed datasets.
+
+**2.4. Check if the GCM Exists**
+
+- Checks if any raw data files exist for the selected GCM.
+- If no files exist, it prints "GCM results are not available".
+
+**2.5. Loop Through Each Climate Variable**
+
+- The script loops through each climate variable (pr, tasmax, etc.).
+
+*2.5.1. Define File Paths for Each Variable*
+
+- Constructs paths for raw data, bias-corrected data, and observed data dynamically.
+
+*2.5.2. Check if Bias-Corrected Data Exists*
+
+- If bias-corrected data is missing, the script skips that variable.
+
+*2.5.3. Load Observed Data*
+
+- Loads observed PRISM dataset corresponding to the climate variable.
+
+**2.6. Find and Read Raw Data Files**
+
+- Searches for historical raw CMIP6 files for the selected GCM and variable.
+- If no raw data is found, the script skips to the next variable.
+
+**2.7. Compute Cumulative Distribution Functions (CDFs)**
+
+- Computes CDF for the given dataset.
+- The function sorts values and calculates the cumulative probability.
+
+**2.8. Extract and Process Data**
+
+- Extracts station-specific data for raw, bias-corrected, and observed datasets.
+- Computes CDFs for each dataset.
+
+**2.9. Generate and Display the CDF Plot**
+
+- Uses ggplot2 to plot CDF curves.
+- Each line represents Raw Data, Bias-Corrected Data, and Observed Data.
+- Colors: Red = Raw CMIP6, Blue = Bias-Corrected, Green = Observed.
+
+---
+
+**Summary**
+
+    ✔ Checks for missing files dynamically.
+    ✔ Computes CDFs for Raw, Bias-Corrected, and Observed data.
+    ✔ Plots CDFs for station-specific comparisons.
+    ✔ Ensures better visualization of bias correction performance. 
+
+---
+
+## 6. Plotting the statistics comparison
+```{r}
+# 1. Load Required Libraries
+library(data.table)
+library(ggplot2)
+library(stringr)
+library(here)
+
+# 2. Define User Inputs
+GCM_Name <- "CanESM5"   # Change this to your required GCM
+Station <- "DSM"           # Change this to your required station
+
+# Variable-to-observed file mapping
+variable_map <- list(
+  "pr" = "pcp_mm.csv",
+  "hurs" = "hmd_percent.csv",
+  "tasmax" = "tmp_max_c.csv",
+  "tasmin" = "tmp_min_c.csv",
+  "sfcWind" = "wnd_mps.csv"
+)
+
+# File Paths
+base_raw_data_folder <- here("..", "Outputs folder", "raw cmip6 unit converted csv")
+base_bias_corrected_folder <- here("..", "Outputs folder", "bias corrected cmip6 csv")
+observed_data_folder <- here("..", "Inputs Folder", "Observed_Climate_Variables")
+
+# Function to compute CDF
+compute_cdf <- function(data) {
+  sorted_data <- sort(data, na.last = TRUE)
+  cdf <- seq(1, length(sorted_data)) / length(sorted_data)
+  return(data.table(Value = sorted_data, CDF = cdf))
+}
+
+# Check if the GCM exists
+raw_gcm_files <- list.files(base_raw_data_folder, pattern = paste0("^", GCM_Name), recursive = TRUE)
+
+if (length(raw_gcm_files) == 0) {
+  cat(sprintf("GCM %s results are not available.\n", GCM_Name))
+} else {
+  cat(sprintf("GCM %s found. Processing variables...\n", GCM_Name))
+
+  for (Variable in names(variable_map)) {
+
+    # Define paths for current variable
+    raw_data_folder <- file.path(base_raw_data_folder, Variable)
+    bias_corrected_folder <- file.path(base_bias_corrected_folder, Variable)
+    observed_data_path <- file.path(observed_data_folder, variable_map[[Variable]])
+
+    if (!dir.exists(bias_corrected_folder)) {
+      cat(sprintf("Variable %s is not available for GCM %s in the bias corrected folder.\n", Variable, GCM_Name))
+      next
+    }
+
+    if (!file.exists(observed_data_path)) {
+      cat(sprintf("Observed data for %s is missing. Skipping...\n", Variable))
+      next
+    }
+
+    observed_data <- fread(observed_data_path)
+
+    # Find historical file
+    raw_files <- list.files(raw_data_folder, pattern = paste0("^", GCM_Name, "_historical_", Variable, "_\\d{4}-\\d{4}\\.csv$"), full.names = TRUE)
+
+    if (length(raw_files) == 0) {
+      cat(sprintf("No raw data found for %s (GCM: %s).\n", Variable, GCM_Name))
+      next
+    }
+
+    raw_file <- raw_files[1]
+    year_range <- str_extract(basename(raw_file), "\\d{4}-\\d{4}")
+    bias_corrected_file <- file.path(bias_corrected_folder, paste0(GCM_Name, "_historical_RFcorrected_", Variable, "_", year_range, ".csv"))
+
+    if (!file.exists(bias_corrected_file)) {
+      cat(sprintf("Bias-corrected file not found for %s (GCM: %s).\n", Variable, GCM_Name))
+      next
+    }
+
+    # Load data
+    raw_data <- fread(raw_file)
+    bias_corrected_data <- fread(bias_corrected_file)
+
+    if (!(Station %in% names(raw_data)) | !(Station %in% names(bias_corrected_data)) | !(Station %in% names(observed_data))) {
+      cat(sprintf("Station %s not found in one or more datasets for %s (GCM: %s).\n", Station, Variable, GCM_Name))
+      next
+    }
+
+    # Extract station data
+    raw_station <- raw_data[[Station]]
+    bias_corrected_station <- bias_corrected_data[[Station]]
+    observed_station <- observed_data[[Station]]
+
+    # Debug: Print preview of bias-corrected station values
+    cat(sprintf("Preview - Bias-Corrected data for %s (%s):\n", Variable, Station))
+    print(summary(bias_corrected_station))
+
+    # Compute CDFs
+    raw_cdf <- compute_cdf(raw_station)
+    bias_cdf <- compute_cdf(bias_corrected_station)
+    obs_cdf <- compute_cdf(observed_station)
+
+    # Tag each CDF
+    raw_cdf[, Type := "Raw Data"]
+    bias_cdf[, Type := "Bias-Corrected Data"]
+    obs_cdf[, Type := "Observed Data"]
+
+    # Combine for plotting
+    cdf_data <- rbind(raw_cdf, bias_cdf, obs_cdf)
+
+    # Generate plot
+    plot_title <- paste("CDF Comparison for Station", Station, "(GCM:", GCM_Name, "-", Variable, "-", year_range, ")")
+
+    cdf_plot <- ggplot(cdf_data, aes(x = Value, y = CDF, color = Type, linetype = Type)) +
+      geom_line(linewidth = 1) +
+      # Optional points for visibility
+      # geom_point(size = 1, alpha = 0.4) +
+      labs(
+        title = plot_title,
+        x = paste0(Variable, " Values"),
+        y = "Cumulative Probability"
+      ) +
+      scale_color_manual(values = c(
+        "Raw Data" = "red",
+        "Bias-Corrected Data" = "blue",
+        "Observed Data" = "green"
+      )) +
+      scale_linetype_manual(values = c(
+        "Raw Data" = "dotted",
+        "Bias-Corrected Data" = "solid",
+        "Observed Data" = "solid"
+      )) +
+      theme_minimal()
+
+    print(cdf_plot)
+    cat(sprintf("Successfully plotted CDF for %s (GCM: %s).\n", Variable, GCM_Name))
+  }
+}
+
+cat("Processing complete.\n")
+
+```
+
+
+Plot the projections.
+```{r}
+# Load libraries
+library(ggplot2)
+library(readr)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(here)
+library(lubridate)  # For date handling
+
+# Define constants
+GCM_Name <- "CanESM5" #"ACCESS-CM2"
+Station <- "DSM"
+variables <- c("pr", "hurs", "tasmax", "tasmin", "sfcWind")
+scenarios <- c("historical", "ssp126", "ssp245", "ssp370", "ssp585")
+
+# Define base output directory
+base_folder <- here("..", "Outputs folder", "bias corrected cmip6 csv")
+
+# Loop through each variable
+for (variable in variables) {
+  cat(sprintf("\n---\nPlotting for variable: %s\n", variable))
+  all_data <- list()
+  
+  for (scn in scenarios) {
+    # Build file search pattern
+    pattern <- paste0("^", GCM_Name, "_", scn, "_RFcorrected_", variable, "_\\d{4}-\\d{4}\\.csv$")
+    
+    # Search for the file within the variable folder
+    var_folder <- file.path(base_folder, variable)
+    file_match <- list.files(var_folder, pattern = pattern, full.names = TRUE)
+    
+    if (length(file_match) > 0) {
+      df <- read_csv(file_match[1], show_col_types = FALSE)
+      
+      cat(sprintf("Reading data for scenario: %s from file: %s\n", scn, basename(file_match[1])))
+
+      if (Station %in% names(df)) {
+        # Debug: View date column before conversion
+        cat("First 5 entries in Date column before conversion:\n")
+        print(head(df$Date))
+        print(str(df$Date))
+
+        # Convert Date using the correct format
+        df <- df %>%
+          select(Date, !!Station) %>%
+          mutate(
+            Date = as.Date(Date, format = "%d/%m/%Y"),
+            Scenario = scn
+          )
+
+        # Debug: View converted Date
+        cat("First 5 converted Date entries:\n")
+        print(head(df$Date))
+        print(summary(df$Date))
+
+        names(df)[2] <- "Value"
+        all_data[[scn]] <- df
+      } else {
+        message(paste("Station", Station, "not found in", scn, "data for variable", variable, "- skipping..."))
+      }
+    } else {
+      message(paste("File not found for", variable, scn, "- skipping..."))
+    }
+  }
+  
+  # Combine and plot if data is available
+  if (length(all_data) > 0) {
+    combined_df <- bind_rows(all_data)
+
+    # Aggregate: sum for pr, mean for others
+    combined_df <- combined_df %>%
+      mutate(Year = year(Date)) %>%
+      group_by(Year, Scenario) %>%
+      summarize(
+        Value = if (variable == "pr") sum(Value, na.rm = TRUE) else mean(Value, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(Date = as.Date(paste0(Year, "-01-01")))
+
+    # Dynamic y-axis label
+    y_label <- if (variable == "pr") "Precipitation (mm/year)" else paste(variable, "(bias-corrected)")
+
+    # Plot
+    p <- ggplot(combined_df, aes(x = Date, y = Value, color = Scenario)) +
+      geom_line(alpha = 0.6) +
+      geom_smooth(se = FALSE, method = "loess", span = 0.1) +
+      labs(
+        title = paste("Timeseries for", variable, "at", Station, "-", GCM_Name),
+        x = "Date", y = y_label,
+        color = "Scenario"
+      ) +
+      theme_minimal()
+    
+    print(p)
+  } else {
+    cat(sprintf("No data available for variable: %s\n", variable))
+  }
+}
+
+```
+
