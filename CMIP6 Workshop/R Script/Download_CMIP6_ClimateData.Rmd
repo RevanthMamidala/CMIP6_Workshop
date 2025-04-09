@@ -1,13 +1,73 @@
 ---
 title: "Complete Guide to NEX GDDP CMIP6 Data Extraction and Bias Correction"
 author: "Revanth Mamidala"
-date: "2025-03-13"
+date: "2025-04-09"
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
+
+## Relative path description
+Run the below script to set the relative path of the script as here::here.
+```{r}
+library(here)
+library(this.path)
+
+# Get full path to the currently running script
+script_path <- this.path::this.path()
+
+# Get the directory containing this script
+script_dir <- dirname(script_path)
+
+# Set the working directory to script folder (optional)
+setwd(script_dir)
+
+# Tell here() to treat this script's folder as the project root
+here::i_am(basename(script_path))
+
+# Confirm
+cat("here() is now rooted at:\n", here::here(), "\n")
+```
+
+## Clear output files.
+If the files from the previous run are not removed, then there is a chance they might hinder the bias correction and other analysis.
+Therefore, the bolow script moves all the output files from previous run and are saved in a "**Previous Run**" folder.
+```{r}
+# Load necessary libraries
+library(fs)     # for file operations
+library(here)   # for cleaner paths
+
+# Define source and destination directories
+source_dir <- here("..", "Outputs folder")
+dest_dir   <- here("..", "Previous Outputs folder")
+
+# Create destination folder if it doesn't exist
+if (!dir_exists(dest_dir)) {
+  dir_create(dest_dir)
+}
+
+# Get all files recursively from source directory
+files_to_move <- dir_ls(source_dir, recurse = TRUE, type = "file")
+
+# Move files to the destination directory
+for (file in files_to_move) {
+  # Get relative path to keep folder structure (optional)
+  rel_path <- path_rel(file, start = source_dir)
+  new_path <- path(dest_dir, rel_path)
+
+  # Create destination subdirectory if it doesn't exist
+  dir_create(path_dir(new_path))
+
+  # Move the file
+  file_move(file, new_path)
+  
+  #cat("Moved:", file, "->", new_path, "\n")
+}
+
+```
+
 
 ## Folder Structure
 To maintain a structured workflow, the following folder structure is used in this tutorial:
@@ -1699,16 +1759,175 @@ for (variable in variables) {
     y_label <- if (variable == "pr") "Precipitation (mm/year)" else paste(variable, "(bias-corrected)")
 
     # Plot
+    #p <- ggplot(combined_df, aes(x = Date, y = Value, color = Scenario)) +
+      #geom_line(alpha = 0.6) +
+      #geom_smooth(se = FALSE, method = "loess", span = 0.1) +
+      #labs(
+      #  title = paste("Timeseries for", variable, "at", Station, "-", GCM_Name),
+      #  x = "Date", y = y_label,
+      #  color = "Scenario"
+      #) +
+      #theme_minimal()
+    ipcc_colors <- c(
+     "historical" = "#000000",
+      "ssp126"     = "#55A868",
+      "ssp245"     = "#4C72B0",
+      "ssp370"     = "#C44E52",
+      "ssp585"     = "#8172B2"
+    )
+
     p <- ggplot(combined_df, aes(x = Date, y = Value, color = Scenario)) +
-      geom_line(alpha = 0.6) +
-      geom_smooth(se = FALSE, method = "loess", span = 0.1) +
+      geom_line(size = 1) +
+      #geom_smooth(se = FALSE, method = "loess", span = 0.1) +
+      scale_color_manual(values = ipcc_colors) +
       labs(
         title = paste("Timeseries for", variable, "at", Station, "-", GCM_Name),
         x = "Date", y = y_label,
         color = "Scenario"
       ) +
       theme_minimal()
+    print(p)
+  } else {
+    cat(sprintf("No data available for variable: %s\n", variable))
+  }
+}
+
+```
+
+```{r}
+# Load libraries
+library(ggplot2)
+library(readr)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(here)
+library(lubridate)
+
+# Define constants
+GCM_Name <- "CanESM5"
+Station <- "DSM"
+variables <- c("pr", "hurs", "tasmax", "tasmin", "sfcWind")
+scenarios <- c("historical", "ssp126", "ssp245", "ssp370", "ssp585")
+base_folder <- here("..", "Outputs folder", "bias corrected cmip6 csv")
+observed_folder <- here("..", "Inputs Folder", "Observed_Climate_Variables")
+
+# IPCC colors
+ipcc_colors <- c(
+  "historical" = "#000000",
+  "ssp126"     = "#55A868",
+  "ssp245"     = "#4C72B0",
+  "ssp370"     = "#C44E52",
+  "ssp585"     = "#8172B2",
+  "Observed"   = "#FF2C2C"
+)
+
+# Observed file mapping
+observed_files <- list(
+  pr = "pcp_mm.csv",
+  tasmax = "tmp_max_c.csv",
+  tasmin = "tmp_min_c.csv",
+  sfcWind = "wnd_mps.csv",
+  hurs = "hmd_percent.csv"
+)
+
+# Loop through each variable
+for (variable in variables) {
+  cat(sprintf("\n---\nPlotting for variable: %s\n", variable))
+  all_data <- list()
+  
+  for (scn in scenarios) {
+    pattern <- paste0("^", GCM_Name, "_", scn, "_RFcorrected_", variable, "_\\d{4}-\\d{4}\\.csv$")
+    var_folder <- file.path(base_folder, variable)
+    file_match <- list.files(var_folder, pattern = pattern, full.names = TRUE)
     
+    if (length(file_match) > 0) {
+      df <- read_csv(file_match[1], show_col_types = FALSE)
+      cat(sprintf("Reading data for scenario: %s from file: %s\n", scn, basename(file_match[1])))
+
+      if (Station %in% names(df)) {
+        df <- df %>%
+          select(Date, !!Station) %>%
+          mutate(
+            Date = as.Date(Date, format = "%d/%m/%Y"),
+            Scenario = scn
+          )
+        names(df)[2] <- "Value"
+        all_data[[scn]] <- df
+      } else {
+        message(paste("Station", Station, "not found in", scn, "data for variable", variable, "- skipping..."))
+      }
+    } else {
+      message(paste("File not found for", variable, scn, "- skipping..."))
+    }
+  }
+
+  # Process observed data
+  obs_path <- file.path(observed_folder, observed_files[[variable]])
+  if (file.exists(obs_path)) {
+    obs_df <- read_csv(obs_path, show_col_types = FALSE) %>%
+      select(Date, all_of(Station)) %>%
+      rename(Value = all_of(Station)) %>%
+      mutate(Date = as.Date(Date, format = "%d/%m/%Y")) %>%
+      mutate(Year = year(Date)) %>%
+      group_by(Year) %>%
+      summarize(
+        Value = if (variable == "pr") sum(Value, na.rm = TRUE) else mean(Value, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(Date = as.Date(paste0(Year, "-01-01")),
+             Scenario = "Observed")
+  } else {
+    message(paste("Observed file for", variable, "not found."))
+    obs_df <- NULL
+  }
+
+  # Combine and plot
+  if (length(all_data) > 0) {
+    combined_df <- bind_rows(all_data) %>%
+      mutate(Year = year(Date)) %>%
+      group_by(Year, Scenario) %>%
+      summarize(
+        Value = if (variable == "pr") sum(Value, na.rm = TRUE) else mean(Value, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(Date = as.Date(paste0(Year, "-01-01")))
+
+    # Add observed data
+    if (!is.null(obs_df)) {
+      combined_df <- bind_rows(combined_df, obs_df)
+    }
+
+    y_label <- if (variable == "pr") "Precipitation (mm/year)" else paste(variable, "(bias-corrected)")
+
+    #p <- ggplot(combined_df, aes(x = Date, y = Value, color = Scenario)) +
+      #geom_smooth(se = FALSE, method = "loess", span = 0.1, size = 1) +
+      #scale_color_manual(values = ipcc_colors) +
+      #labs(
+      #  title = paste("Timeseries for", variable, "at", Station, "-", GCM_Name),
+      #  x = "Date", y = y_label,
+      #  color = "Scenario"
+      #) +
+      #theme_minimal()
+    p <- ggplot(combined_df, aes(x = Date, y = Value, color = Scenario, linetype = Scenario)) +
+      geom_line(size = 1)+
+      #geom_smooth(se = FALSE, method = "loess", span = 0.1, size = 1) +
+      scale_color_manual(values = ipcc_colors) +
+      scale_linetype_manual(values = c(
+        "Observed" = "dotted",
+        "historical" = "solid",
+        "ssp126" = "solid",
+        "ssp245" = "solid",
+        "ssp370" = "solid",
+        "ssp585" = "solid"
+      )) +
+      labs(
+        title = paste("Timeseries for", variable, "at", Station, "-", GCM_Name),
+        x = "Date", y = y_label,
+        color = "Scenario", linetype = "Scenario"
+      ) +
+      theme_minimal()
+  
     print(p)
   } else {
     cat(sprintf("No data available for variable: %s\n", variable))
